@@ -113,6 +113,20 @@ def add_noise(df):
     for i in range(n_noise):
         df[f'noise_{i}'] = np.random.normal(0,100,len(df))
 
+def score_dummy():
+    df = pd.read_csv("dummy.csv")
+    N = 320
+    df = df.sample(N)  # grab random subset (too slow otherwise)
+    if noise: add_noise(df)
+    X, y = df.drop('attack', axis=1), df['attack']
+
+    score(X, y, n_trees=300, desired_TPR=.99,
+          datafile='dummy.csv',
+          reqd_fit_time=.37 if noise and improved else 0.2,
+          reqd_score_time=21 if noise and improved else 13,
+          reqd_FPR=.17 if noise and improved else 0.006,
+          reqd_n_nodes=26300 if noise and improved else 22700)
+
 
 if __name__ == '__main__':
     noise = False
@@ -123,8 +137,10 @@ if __name__ == '__main__':
         improved = True
 
     print(f"Running noise={noise} improved={improved}")
+    #score_dummy()
+    #print()
     #score_cc()
-    print()
+    #print()
     score_http()
     print()
     #score_cancer()
