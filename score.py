@@ -137,10 +137,8 @@ if __name__ == '__main__':
         improved = True
 
     print(f"Running noise={noise} improved={improved}")
-    #score_dummy()
-    #print()
-    #score_cc()
-    #print()
-    score_http()
+    score_cc()
     print()
+    #score_http()
+    #print()
     #score_cancer()
