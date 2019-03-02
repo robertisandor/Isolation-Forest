@@ -10,6 +10,7 @@ class IsolationTreeEnsemble:
         self.sample_size = sample_size 
         self.n_trees = n_trees 
         self.trees = []
+        self.path_lengths = None
 
     def fit(self, X:np.ndarray, improved=False):
         """
@@ -17,15 +18,15 @@ class IsolationTreeEnsemble:
         objects and store them in a list: self.trees.  Convert DataFrames to
         ndarray objects.
         """
-        # if it's a dataframe
         if isinstance(X, pd.DataFrame):
             X = X.values
             X = np.ndarray(buffer=X, shape=X.shape)
-        # TODO: figure out what to set height_limit argument to
-        height_limit = int(np.floor(np.log2(self.sample_size)))
+        self.path_lengths = np.zeros(shape=(X.shape[0], self.n_trees))
+        height_limit = np.ceil(np.log2(self.sample_size))
         self.trees = [IsolationTree(height_limit=height_limit) for tree in range(self.n_trees)]
-        for tree in self.trees:
-            tree.fit(X, improved)
+        self.samples = [np.random.choice(list(range(len(X))), self.sample_size, replace=False) for tree in range(self.n_trees)]
+        for idx, tree in enumerate(self.trees):
+            tree.fit(X[self.samples[idx]], improved)
 
         return self
 
@@ -36,66 +37,67 @@ class IsolationTreeEnsemble:
         tree in self.trees then compute the average for each x_i.  Return an
         ndarray of shape (len(X),1).
         """
-        values = [np.mean([self.instance_path_length(X[idx, :], 
-                                                    tree.root, 
-                                                    height_limit=tree.height_limit, 
-                                                    e=0, 
-                                                    total_size=len(X)) 
-                            for tree in self.trees]) for idx in range(len(X))]
-        return values
-
-    def instance_path_length(self, x_i, tree, height_limit, e=0, total_size=0):
-        if e >= height_limit or (tree.left is None and tree.right is None):
-            estimated_path_length = 0
-            if tree.n_rows > 2:
-                # c(size) = an adjustment for an unbuilt subtree (that went past the height_limit)
-                # this part computes the estimate for exceeding the height limit
-                estimated_path_length = 2 * (np.log(tree.n_rows - 1) + np.euler_gamma) - (2 * (tree.n_rows - 1) / tree.n_rows)
-            elif tree.n_rows == 2:
-                estimated_path_length = 1
-            else:
+        for idx, x_i in enumerate(X):
+            for tree_idx, tree in enumerate(self.trees):        
+                curr = tree.root
+                a = tree.root.split_attr
+                e = 0
+                while e < tree.height_limit:
+                    if x_i[a] < curr.split_value:
+                        curr = curr.left
+                    else:
+                        curr = curr.right
+                    e += 1
+                    if curr.left is not None and curr.right is not None:
+                        a = curr.split_attr
+                    else:
+                        break 
+                    
+                #print(e, curr.n_rows)
                 estimated_path_length = 0
-            return e + estimated_path_length
-        else:
-            a = tree.split_attr
-            if x_i[a] < tree.split_value:
-                return self.instance_path_length(x_i, tree.left, height_limit, e+1)
-            else:
-                return self.instance_path_length(x_i, tree.right, height_limit, e+1)
+                if curr.n_rows > 2:
+                    estimated_path_length = (2 * (np.log2(curr.n_rows - 1) + np.euler_gamma)) - (2 * (curr.n_rows - 1) / curr.n_rows)
+                elif curr.n_rows == 2:
+                    estimated_path_length = 1
+                else:
+                    estimated_path_length = 0
+                # print(f"e = {e}, curr.n_rows = {curr.n_rows}, estimated_path_length = {estimated_path_length}, e + estimated_path_length = {e + estimated_path_length}")
+                self.path_lengths[idx, tree_idx] = e + estimated_path_length
+        #print(np.unique(self.path_lengths))
+        return np.array(np.mean(self.path_lengths, axis=1)).reshape(len(X), 1)
 
     def anomaly_score(self, X:np.ndarray) -> np.ndarray:
         """
         Given a 2D matrix of observations, X, compute the anomaly score
         for each x_i observation, returning an ndarray of them.
         """
-        # TODO: actually compute anomaly score 
         X = np.ndarray(buffer=np.array(X), shape=X.shape)
-        # is it self.sample_size?
-        c_n = 2 * (np.log(self.sample_size - 1) + np.euler_gamma) - 2 * (self.sample_size - 1) / self.sample_size
-        avg_path_lengths = self.path_length(X)
-        scores = np.array([2**(-1 * avg_path_lengths[idx] / c_n) for idx, x_i in enumerate(X)])
-        print(pd.DataFrame(scores).describe())
-        return np.ndarray(buffer=np.array(scores), shape=(len(scores), 1), dtype=np.float16)
+        c_n = (2. * np.log2(self.sample_size - 1) + np.euler_gamma) - (2. * ((self.sample_size - 1) / self.sample_size))
+        if np.sum(self.path_lengths) == 0:
+            scores = np.array(2.**(-1. * (self.path_length(X) / c_n)), dtype=np.float16)
+        else:
+            scores = self.path_lengths
+        return scores
 
     def predict_from_anomaly_scores(self, scores:np.ndarray, threshold:float) -> np.ndarray:
         """
         Given an array of scores and a score threshold, return an array of
         the predictions: 1 for any score >= the threshold and 0 otherwise.
         """ 
-        return np.ndarray(buffer=np.array([1 if score < threshold else 0 for score in scores]), 
-                            shape=(len(scores), 1), 
-                            dtype=np.int16)
+        # print(scores)
+        return (scores >= threshold)
 
     def predict(self, X:np.ndarray, threshold:float) -> np.ndarray:
         """A shorthand for calling anomaly_score() and predict_from_anomaly_scores()."""
         return self.predict_from_anomaly_scores(self.anomaly_score(X), threshold)
 
-
+# compute path lengths at the time of creation 
 class IsolationTree:
     def __init__(self, height_limit, e=0):
         self.root = None
         self.height_limit = height_limit
         self.n_nodes = 0 
+        self.e = e
 
     def fit(self, X:np.ndarray, improved=False):
         """
@@ -105,48 +107,43 @@ class IsolationTree:
         If you are working on an improved algorithm, check parameter "improved"
         and switch to your new functionality else fall back on your original code.
         """
-        #print("Fit!")
-        # TODO: flesh this out
         if improved:
             return self.root
         else:
-            if self.height_limit <= 0 or X.shape[0] <= 1:
+            if self.e >= self.height_limit or X.shape[0] <= 1:
                 self.root = IsolationTreeNode(left=None, right=None, n_rows=X.shape[0])
                 self.n_nodes += self.root.n_nodes
             else:
                 q = randint(0, X.shape[1]-1)
-                split_idx = randint(0, X.shape[0]-1)
-                p = X[split_idx, q]
                 col_min, col_max = np.min(X[:, q]), np.max(X[:, q])
-                if col_min == col_max:
-                    self.root = IsolationTreeNode(left=None, right=None)
-                    self.n_nodes += self.root.n_nodes
-                    self.root.n_rows = len(X)
-                    return self.root
-                # don't know if this portion below is valid/necessary
-                # if p == col_min or p == col_max:
-                #     self.root = IsolationTreeNode(left=None, right=None)
-                #     self.n_nodes += self.root.n_nodes
-                #     return self.root
+                p = np.random.uniform(col_min, col_max)
                 X_l = X[X[:, q] < p]
                 X_r = X[X[:, q] >= p]
-                self.root = IsolationTreeNode( # should these be isolation trees or isolation tree nodes?
-                                            left=IsolationTree(height_limit=self.height_limit-1).fit(X_l, improved),
-                                            right=IsolationTree(height_limit=self.height_limit-1).fit(X_r, improved),
-                                            split_attr=q,
-                                            split_value=p,
-                                            n_rows=len(X))
+                    
+                while len(X_l) == 0 or len(X_r) == 0:
+                    q = randint(0, X.shape[1]-1)
+                    col_min, col_max = np.min(X[:, q]), np.max(X[:, q])
+                    p = np.random.uniform(col_min, col_max)
+                    X_l = X[X[:, q] < p]
+                    X_r = X[X[:, q] >= p]
+
+                # if len(np.unique(X_l[:, q])) == 1 or len(np.unique(X_r[:, q])) == 1:
+                #     self.root = IsolationTreeNode(left=IsolationTreeNode(left=None, right=None, split_attr=q, split_value=p, n_rows=len(X_l)),
+                #                               right=IsolationTreeNode(left=None, right=None, split_attr=q, split_value=p, n_rows=len(X_r)),
+                #                               split_attr=q,
+                #                               split_value=p,
+                #                               n_rows=len(X))
+                #     self.n_nodes += self.root.n_nodes
+                #     return self.root 
+
+                self.root = IsolationTreeNode(left=IsolationTree(height_limit=self.height_limit, e=self.e+1).fit(X_l, improved),
+                                              right=IsolationTree(height_limit=self.height_limit, e=self.e+1).fit(X_r, improved),
+                                              split_attr=q,
+                                              split_value=p,
+                                              n_rows=len(X))
                 self.root.left.n_rows = len(X_l)
                 self.root.right.n_rows = len(X_r)
-                print(f"self.root.n_nodes = {self.root.n_nodes}")
-                print(f"self.root.left.n_nodes = {self.root.left.n_nodes}")
-                print(f"self.root.right.n_nodes = {self.root.right.n_nodes}")
-
-                # print(f"self.root.n_rows = {self.root.n_rows}")
-                # print(f"self.root.left.n_rows = {self.root.left.n_rows}")
-                # print(f"self.root.right.n_rows = {self.root.right.n_rows}")
-                self.n_nodes += self.root.left.n_nodes + self.root.right.n_nodes
-        #print(f"self.root.n_nodes = {self.root.n_nodes}")    
+                self.n_nodes += self.root.left.n_nodes + self.root.right.n_nodes   
         return self.root
 
 
@@ -158,22 +155,19 @@ def find_TPR_threshold(y, scores, desired_TPR):
     score threshold and FPR.
     """
     ...
-    # TODO: fill this out
     score_threshold = 1.0
     TPR = 0
     FPR = 0
     increment = 0.01
-    print(f"desired_TPR = {desired_TPR}")
     while TPR < desired_TPR and (score_threshold - increment) > 0:
         score_threshold -= increment
-        y_pred = np.array([1 if score < score_threshold else 0 for score in scores])
+        y_pred = (scores >= score_threshold)
         confusion = confusion_matrix(y, y_pred)
         TN, FP, FN, TP = confusion.flat
+        print(f"TN, FP, FN, TP = {TN}, {FP}, {FN}, {TP}")
         TPR = TP / (TP + FN)
         FPR = FP / (FP + TN)
         print(f"score_threshold = {score_threshold}, TPR = {TPR}, FPR = {FPR}")
-        
-    print(f"score_threshold = {score_threshold}, TPR = {TPR}, FPR = {FPR}")   
     return score_threshold, FPR 
 
 class IsolationTreeNode:
