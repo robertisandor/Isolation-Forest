@@ -18,11 +18,28 @@ class IsolationTreeEnsemble:
         """
         if isinstance(X, pd.DataFrame):
             X = X.values
+        
+        if improved:
+            sample_split_indices = [np.random.uniform(min(X[:, attr]), max(X[:, attr]), size=60) for attr in range(X.shape[1])]
+            splits = []
+            for idx, attribute in enumerate(range(X.shape[1])):
+                X_l = [(X[:, attribute] < split).sum() for split in sample_split_indices[idx]]
+                X_r = [(X[:, attribute] >= split).sum() for split in sample_split_indices[idx]]
+                split_min = np.minimum(X_l, X_r)
+                splits.append((attribute, split_min.sum())) 
+            lowest_loss = sorted(splits, key=lambda item: item[1])[:int(X.shape[1] / 2)]
+            keep_columns = [column[0] for column in lowest_loss]
+
         height_limit = np.ceil(np.log2(self.sample_size))
         sample_indices = [np.random.choice(len(X), self.sample_size, replace=False) for idx in range(self.n_trees)]
+
         for idx in range(self.n_trees):
             tree = IsolationTree(height_limit=height_limit)
-            tree.root = tree.fit(X[sample_indices[idx]], improved)
+            if improved:
+                X_reduced = X[:, keep_columns]
+                tree.root = tree.fit(X_reduced[sample_indices[idx]], improved)
+            else:
+                tree.root = tree.fit(X[sample_indices[idx]], improved)
             self.trees.append(tree)
             self.n_nodes += tree.n_nodes 
 
@@ -89,7 +106,11 @@ class IsolationTree:
         If you are working on an improved algorithm, check parameter "improved"
         and switch to your new functionality else fall back on your original code.
         """
-        self.root = self.fit_(X, e=0)
+        if improved:
+
+            self.root = self.fit_(X, e=0)
+        else:
+            self.root = self.fit_(X, e=0)
         self.n_nodes += 1
         return self.root 
 
