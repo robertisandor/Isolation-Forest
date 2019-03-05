@@ -1,0 +1,16 @@
+Running noise=True improved=True
+INFO creditcard.csv fit time 0.69s
+INFO creditcard.csv 22736 total nodes in 300 trees
+INFO creditcard.csv score time 21.90s
+SUCCESS creditcard.csv 300 trees at desired TPR 80.0% getting FPR 0.0651%
+
+INFO http.csv fit time 0.34s
+INFO http.csv 11160 total nodes in 300 trees
+INFO http.csv score time 14.30s
+SUCCESS http.csv 300 trees at desired TPR 99.0% getting FPR 0.0002%
+
+INFO cancer.csv fit time 0.17s
+INFO cancer.csv 9158 total nodes in 1000 trees
+INFO cancer.csv score time 0.96s
+FAIL cancer.csv FPR 0.5770 > 0.33 +- 30%
+ERRORS cancer.csv 1 errors 1000 trees at desired TPR  75.0% getting FPR 0.5770%
